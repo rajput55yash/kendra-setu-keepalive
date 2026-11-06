@@ -1,0 +1,49 @@
+name: Keep API awake
+
+on:
+  schedule:
+    # GitHub may delay scheduled runs by a few minutes, hence every 5 minutes.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping hosted API
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 https://kendra-setu-api.onrender.com/health || true)
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "API did not respond with HTTP 200"
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Keep scheduled workflow enabled (daily activity)
+        run: |
+          today=$(date -u +%F)
+          if [ -f last-ping.txt ] && [ "$(cat last-ping.txt)" = "$today" ]; then
+            echo "Repository already marked active today."
+            exit 0
+          fi
+          echo "$today" > last-ping.txt
+          git config user.name "keepalive-bot"
+          git config user.email "keepalive-bot@users.noreply.github.com"
+          git add last-ping.txt
+          git commit -m "chore: keepalive $today"
+          git push
